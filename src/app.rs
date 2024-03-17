@@ -9,32 +9,45 @@ use crossterm::event::{self, Event as CEvent, KeyCode};
 
 use ratatui::{prelude::*, widgets::*};
 
-use crate::commands::{get_explicit_packages, PackageVersionInfo};
+use crate::commands::{get_all_packages, PackageVersionInfo};
 use crate::ui::*;
 
+#[derive(Clone)]
+pub enum ListFilter {
+    All,
+    Explicit,
+    Dependencies,
+    Search(String),
+}
+
+// TODO: Turn into a generic??
 pub struct StatefulList {
     pub state: ListState,
-    pub packages: Vec<PackageVersionInfo>,
+    pub items: Vec<PackageVersionInfo>,
+    pub filtered_items: Vec<PackageVersionInfo>,
     pub last_selected: Option<usize>,
+    pub list_filter: ListFilter,
 }
 
 pub struct App {
-    pub list: StatefulList,
+    pub packages_list: StatefulList,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            list: StatefulList::new(),
+            packages_list: StatefulList::new(),
         }
     }
 
     fn go_top(&mut self) {
-        self.list.state.select(Some(0));
+        self.packages_list.state.select(Some(0));
     }
 
     fn go_bottom(&mut self) {
-        self.list.state.select(Some(self.list.packages.len() - 1));
+        self.packages_list
+            .state
+            .select(Some(self.packages_list.filtered_items.len() - 1));
     }
 }
 
@@ -71,8 +84,8 @@ impl App {
         // Render loop
         loop {
             terminal
-                .draw(|rect| {
-                    let size = rect.size();
+                .draw(|frame| {
+                    let size = frame.size();
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .margin(2)
@@ -86,31 +99,14 @@ impl App {
                         )
                         .split(size);
 
-                    let menu = render_menu(&menu_titles);
+                    let menu = create_menu(&menu_titles);
 
-                    let tabs = render_tabs(menu, active_menu_item);
-                    rect.render_widget(tabs, chunks[0]);
+                    render_tabs(menu, active_menu_item, frame, chunks[0]);
 
-                    let footer = render_footer();
-                    rect.render_widget(footer, chunks[2]);
+                    render_footer(frame, chunks[2]);
 
                     match active_menu_item {
-                        MenuItem::PackageList => {
-                            let package_chunks = Layout::default()
-                                .direction(Direction::Horizontal)
-                                .constraints(
-                                    [Constraint::Percentage(10), Constraint::Percentage(90)]
-                                        .as_ref(),
-                                )
-                                .split(chunks[1]);
-                            let (left, right) = render_package_table(self);
-                            rect.render_stateful_widget(
-                                left,
-                                package_chunks[0],
-                                &mut self.list.state,
-                            );
-                            rect.render_widget(right, package_chunks[1])
-                        }
+                        MenuItem::PackageList => self.render_package_table(frame, chunks[1]),
                     }
                 })
                 .unwrap();
@@ -120,31 +116,58 @@ impl App {
                 UiEvent::Input(event) => match event.code {
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Char('p') => active_menu_item = MenuItem::PackageList,
-                    KeyCode::Up | KeyCode::Char('k') => self.list.previous(),
-                    KeyCode::Down | KeyCode::Char('j') => self.list.next(),
+                    KeyCode::Up | KeyCode::Char('k') => self.packages_list.previous(),
+                    KeyCode::Down | KeyCode::Char('j') => self.packages_list.next(),
                     KeyCode::Char('g') => self.go_top(),
                     KeyCode::Char('G') => self.go_bottom(),
+                    KeyCode::Char('a') => self.change_filter(ListFilter::All),
+                    KeyCode::Char('i') => self.change_filter(ListFilter::Explicit),
+                    KeyCode::Char('d') => self.change_filter(ListFilter::Dependencies),
+                    // TODO: Pressing the key brings up an input for the filter.
+                    KeyCode::Char('f') => self.change_filter(ListFilter::Search("al".to_string())),
                     _ => {}
                 },
                 UiEvent::Tick => {}
             }
         }
     }
+
+    fn change_filter(&mut self, filter: ListFilter) {
+        self.packages_list.list_filter = filter;
+        self.packages_list.filtered_items = self
+            .packages_list
+            .items
+            .clone()
+            .into_iter()
+            .filter(|p| match self.packages_list.list_filter.clone() {
+                ListFilter::All => true,
+                ListFilter::Explicit => !p.is_dependency,
+                ListFilter::Dependencies => p.is_dependency,
+                // TODO: Make the search a bit smarter??
+                ListFilter::Search(s) => p.name.contains(s.as_str()),
+            })
+            .collect();
+
+        self.go_top();
+    }
 }
 
 impl StatefulList {
     fn new() -> Self {
+        let packages = get_all_packages(&"pacman");
         StatefulList {
             state: ListState::default(),
-            packages: get_explicit_packages(&"pacman"),
+            items: packages.clone(),
             last_selected: None,
+            list_filter: ListFilter::All,
+            filtered_items: packages.clone(),
         }
     }
 
     fn next(&mut self) {
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.packages.len() - 1 {
+                if i >= self.filtered_items.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -159,7 +182,7 @@ impl StatefulList {
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.packages.len() - 1
+                    self.filtered_items.len() - 1
                 } else {
                     i - 1
                 }
