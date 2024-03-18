@@ -6,7 +6,7 @@ use ratatui::{prelude::*, widgets::*};
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::commands::{get_all_packages, PackageVersionInfo};
+use crate::commands::{get_all_packages, PackageType, PackageVersionInfo};
 use crate::ui::*;
 
 // TODO: Should the search be separate from other filters? Allowing for subsection filtering.
@@ -16,6 +16,7 @@ pub enum ListFilter {
     All,
     Explicit,
     Dependencies,
+    Foreign,
     Search(String),
 }
 
@@ -118,9 +119,10 @@ impl App {
                         KeyCode::Char('g') => self.go_top(),
                         KeyCode::Char('G') => self.go_bottom(),
                         KeyCode::Char('a') => self.change_filter(ListFilter::All),
-                        KeyCode::Char('i') => self.change_filter(ListFilter::Explicit),
+                        KeyCode::Char('e') => self.change_filter(ListFilter::Explicit),
                         KeyCode::Char('d') => self.change_filter(ListFilter::Dependencies),
-                        KeyCode::Char('f') => self.current_screen = Screens::FilterInput,
+                        KeyCode::Char('f') => self.change_filter(ListFilter::Foreign),
+                        KeyCode::Char('s') => self.current_screen = Screens::FilterInput,
                         _ => {}
                     },
                     Screens::FilterInput if key.kind == KeyEventKind::Press => match key.code {
@@ -150,8 +152,9 @@ impl App {
             .into_iter()
             .filter(|p| match self.packages_list.list_filter.clone() {
                 ListFilter::All => true,
-                ListFilter::Explicit => !p.is_dependency,
-                ListFilter::Dependencies => p.is_dependency,
+                ListFilter::Explicit => p.package_type == PackageType::Explicit,
+                ListFilter::Dependencies => p.package_type == PackageType::Dependency,
+                ListFilter::Foreign => p.package_type == PackageType::Foreign,
                 // TODO: Make the search a bit smarter??
                 ListFilter::Search(s) => p.name.contains(s.as_str()),
             })

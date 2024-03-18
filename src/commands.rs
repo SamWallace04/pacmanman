@@ -2,9 +2,14 @@ use std::process::Command;
 #[derive(Clone)]
 pub struct PackageVersionInfo {
     pub name: String,
-    pub version: String,
     details: Option<PackageDetails>,
-    pub is_dependency: bool,
+    pub package_type: PackageType,
+}
+
+impl PartialEq for PackageVersionInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 impl PackageVersionInfo {
@@ -34,28 +39,54 @@ pub struct PackageDetails {
     pub installed_reason: String,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum PackageType {
+    Explicit,
+    Dependency,
+    Foreign,
+}
+
 // TODO: Is there a better way than running the commands manually??
 // i.e. reading the info from a file.
 pub fn get_all_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     let mut list = get_explicit_packages(package_manager);
     let dependencies = get_dependency_packages(package_manager);
+    let foreign = get_foreign_packages(package_manager);
 
-    list.extend(dependencies);
-    list.sort_by_key(|i| i.name.clone());
-    list
+    let mut dedupe: Vec<PackageVersionInfo> = list
+        .iter_mut()
+        .map(|p| {
+            // Getting explicit packages also gets foreign ones.
+            // Update the explicit type to foreign if it's in the foreign list.
+            if foreign.contains(p) {
+                p.package_type = PackageType::Foreign
+            }
+            p.clone()
+        })
+        .collect();
+
+    dedupe.extend(dependencies);
+    dedupe.sort_by_key(|i| i.name.clone());
+    dedupe
 }
 
 pub fn get_explicit_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     let out = run_command(package_manager, vec!["-Qe"]);
 
-    parse_version_list(&out, false)
+    parse_version_list(&out, PackageType::Explicit)
 }
 
 //TODO: See if there is a way to link dependencies back to the explicit package.
 pub fn get_dependency_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     let out = run_command(package_manager, vec!["-Qdt"]);
 
-    parse_version_list(&out, true)
+    parse_version_list(&out, PackageType::Dependency)
+}
+
+pub fn get_foreign_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
+    let out = run_command(package_manager, vec!["-Qm"]);
+
+    parse_version_list(&out, PackageType::Foreign)
 }
 
 fn get_package_details(package_manager: &str, package_name: &str) -> PackageDetails {
@@ -64,7 +95,7 @@ fn get_package_details(package_manager: &str, package_name: &str) -> PackageDeta
     parse_details_list(&out)
 }
 
-fn parse_version_list(input: &str, is_dependency: bool) -> Vec<PackageVersionInfo> {
+fn parse_version_list(input: &str, package_type: PackageType) -> Vec<PackageVersionInfo> {
     let list = input.split("\n");
 
     let mut version_list = vec![];
@@ -76,9 +107,8 @@ fn parse_version_list(input: &str, is_dependency: bool) -> Vec<PackageVersionInf
 
         version_list.push(PackageVersionInfo {
             name: split[0].to_string(),
-            version: split[1].to_string(),
             details: None,
-            is_dependency,
+            package_type: package_type.clone(),
         });
     }
     version_list
