@@ -1,17 +1,16 @@
-use std::{
-    io::{self},
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::io::{self};
 
-use crossterm::event::{self, Event as CEvent, KeyCode};
+use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind};
 
 use ratatui::{prelude::*, widgets::*};
+use tui_input::backend::crossterm::EventHandler;
+use tui_input::Input;
 
 use crate::commands::{get_all_packages, PackageVersionInfo};
 use crate::ui::*;
 
+// TODO: Should the search be separate from other filters? Allowing for subsection filtering.
+// eg: Explicit with a certain name.
 #[derive(Clone)]
 pub enum ListFilter {
     All,
@@ -29,14 +28,23 @@ pub struct StatefulList {
     pub list_filter: ListFilter,
 }
 
+#[derive(PartialEq)]
+pub enum Screens {
+    DetailsList,
+    FilterInput,
+}
 pub struct App {
     pub packages_list: StatefulList,
+    pub current_screen: Screens,
+    pub filter_input: Input,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             packages_list: StatefulList::new(),
+            current_screen: Screens::DetailsList,
+            filter_input: Input::default(),
         }
     }
 
@@ -53,31 +61,6 @@ impl App {
 
 impl App {
     pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
-        // Set up a thread and channel to listen for user input.
-        // If no input is detected in 200ms then emit a tick.
-        let (tx, rx) = mpsc::channel();
-        let tick_rate = Duration::from_millis(200);
-        thread::spawn(move || {
-            let mut last_tick = Instant::now();
-            loop {
-                let timeout = tick_rate
-                    .checked_sub(last_tick.elapsed())
-                    .unwrap_or_else(|| Duration::from_secs(0));
-
-                if event::poll(timeout).expect("poll works") {
-                    if let CEvent::Key(key) = event::read().expect("can read events") {
-                        tx.send(UiEvent::Input(key)).expect("can send events");
-                    }
-                }
-
-                if last_tick.elapsed() >= tick_rate {
-                    if let Ok(_) = tx.send(UiEvent::Tick) {
-                        last_tick = Instant::now();
-                    }
-                }
-            }
-        });
-
         let menu_titles = vec!["Packages", "Quit"];
         let mut active_menu_item = MenuItem::PackageList;
 
@@ -106,28 +89,54 @@ impl App {
                     render_footer(frame, chunks[2]);
 
                     match active_menu_item {
-                        MenuItem::PackageList => self.render_package_table(frame, chunks[1]),
+                        MenuItem::PackageList => {
+                            if self.packages_list.filtered_items.len() > 0 {
+                                self.render_package_details(frame, chunks[1]);
+                            } else {
+                                render_empty_list(frame, chunks[1]);
+                            }
+                        }
+                    }
+
+                    if self.current_screen == Screens::FilterInput {
+                        self.render_filter_popup(frame);
                     }
                 })
                 .unwrap();
 
             // Input handling
-            match rx.recv().unwrap() {
-                UiEvent::Input(event) => match event.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('p') => active_menu_item = MenuItem::PackageList,
-                    KeyCode::Up | KeyCode::Char('k') => self.packages_list.previous(),
-                    KeyCode::Down | KeyCode::Char('j') => self.packages_list.next(),
-                    KeyCode::Char('g') => self.go_top(),
-                    KeyCode::Char('G') => self.go_bottom(),
-                    KeyCode::Char('a') => self.change_filter(ListFilter::All),
-                    KeyCode::Char('i') => self.change_filter(ListFilter::Explicit),
-                    KeyCode::Char('d') => self.change_filter(ListFilter::Dependencies),
-                    // TODO: Pressing the key brings up an input for the filter.
-                    KeyCode::Char('f') => self.change_filter(ListFilter::Search("al".to_string())),
+            if let CEvent::Key(key) = event::read().unwrap() {
+                if key.kind == event::KeyEventKind::Release {
+                    continue;
+                }
+                match self.current_screen {
+                    Screens::DetailsList => match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('p') => active_menu_item = MenuItem::PackageList,
+                        KeyCode::Up | KeyCode::Char('k') => self.packages_list.previous(),
+                        KeyCode::Down | KeyCode::Char('j') => self.packages_list.next(),
+                        KeyCode::Char('g') => self.go_top(),
+                        KeyCode::Char('G') => self.go_bottom(),
+                        KeyCode::Char('a') => self.change_filter(ListFilter::All),
+                        KeyCode::Char('i') => self.change_filter(ListFilter::Explicit),
+                        KeyCode::Char('d') => self.change_filter(ListFilter::Dependencies),
+                        KeyCode::Char('f') => self.current_screen = Screens::FilterInput,
+                        _ => {}
+                    },
+                    Screens::FilterInput if key.kind == KeyEventKind::Press => match key.code {
+                        KeyCode::Enter => {
+                            self.change_filter(ListFilter::Search(
+                                self.filter_input.value().to_string(),
+                            ));
+                            self.filter_input.reset();
+                            self.current_screen = Screens::DetailsList;
+                        }
+                        _ => {
+                            self.filter_input.handle_event(&CEvent::Key(key));
+                        }
+                    },
                     _ => {}
-                },
-                UiEvent::Tick => {}
+                }
             }
         }
     }

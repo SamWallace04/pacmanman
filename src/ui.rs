@@ -12,11 +12,6 @@ use crate::app::App;
 const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
 const SELECTED_STYLE_BG: Color = tailwind::BLACK;
 
-pub enum UiEvent<I> {
-    Input(I),
-    Tick,
-}
-
 #[derive(Copy, Clone, Debug)]
 pub enum MenuItem {
     PackageList,
@@ -70,7 +65,7 @@ pub fn render_footer<'a>(frame: &mut Frame<'_>, chunk: Rect) {
 }
 
 impl App {
-    pub fn render_package_table<'a>(&mut self, frame: &mut Frame<'_>, chunk: Rect) {
+    pub fn render_package_details<'a>(&mut self, frame: &mut Frame<'_>, chunk: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(10), Constraint::Percentage(90)].as_ref())
@@ -87,17 +82,13 @@ impl App {
             .filtered_items
             .iter()
             .map(|p| {
-                if p.is_dependency {
-                    ListItem::new(Line::from(vec![Span::styled(
-                        p.name.clone(),
-                        Style::default().fg(Color::Black).bg(Color::Gray),
-                    )]))
+                let style = if p.is_dependency {
+                    Style::default().fg(Color::Black).bg(Color::Gray)
                 } else {
-                    ListItem::new(Line::from(vec![Span::styled(
-                        p.name.clone(),
-                        Style::default(),
-                    )]))
-                }
+                    Style::default()
+                };
+
+                ListItem::new(Line::from(vec![Span::styled(p.name.clone(), style)]))
             })
             .collect();
 
@@ -166,6 +157,53 @@ impl App {
         frame.render_stateful_widget(list, layout[0], &mut self.packages_list.state);
         frame.render_widget(details_display, layout[1]);
     }
+
+    pub fn render_filter_popup(&mut self, frame: &mut Frame<'_>) {
+        let block = Block::default()
+            .title("Filter by name")
+            .borders(Borders::ALL);
+        let area = centered_rect(60, 20, frame.size());
+
+        let input = Paragraph::new(self.filter_input.value())
+            .style(Style::default())
+            .block(block);
+
+        let width = area.width.max(3) - 3;
+        let scroll = self.filter_input.visual_scroll(width as usize);
+        frame.set_cursor(
+            area.x + (self.filter_input.visual_cursor().max(scroll) - scroll) as u16 + 1,
+            area.y + 1,
+        );
+
+        frame.render_widget(Clear, area); //this clears out the background
+        frame.render_widget(input, area);
+    }
+}
+
+pub fn render_empty_list(frame: &mut Frame<'_>, chunk: Rect) {
+    let para = Paragraph::new(
+        "Could not find any packages that match the filter. Please reset it or try another.",
+    )
+    .style(Style::default());
+
+    frame.render_widget(para, chunk);
+}
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1])[1]
 }
 
 fn join_vec(vec: Vec<String>) -> String {
