@@ -1,16 +1,6 @@
-use ratatui::{
-    layout::*,
-    style::{palette::tailwind, *},
-    text::*,
-    widgets::*,
-    Frame,
-};
+use ratatui::{layout::*, style::*, text::*, widgets::*, Frame};
 
 use crate::{app::App, commands::PackageType};
-
-// TODO: Proper styling + config
-const SELECTED_STYLE_FG: Color = tailwind::BLUE.c300;
-const SELECTED_STYLE_BG: Color = tailwind::BLACK;
 
 #[derive(Copy, Clone, Debug)]
 pub enum MenuItem {
@@ -60,7 +50,7 @@ pub fn render_tabs<'a>(
 }
 
 pub fn render_footer<'a>(frame: &mut Frame<'_>, chunk: Rect) {
-    let footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, d to show dependency packages, f to show foreign packages (AUR/manual install), s to search, a to reset the filter").centered();
+    let footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, a to reset the filter").centered();
     frame.render_widget(footer, chunk);
 }
 
@@ -84,8 +74,12 @@ impl App {
             .map(|p| {
                 let style = match p.package_type {
                     PackageType::Explicit => Style::default(),
-                    PackageType::Dependency => Style::default().fg(Color::Black).bg(Color::Gray),
-                    PackageType::Foreign => Style::default().fg(Color::Black).bg(Color::Yellow),
+                    PackageType::Orphan => Style::default()
+                        .fg(self.config.theme.orphan_fg)
+                        .bg(self.config.theme.orphan_bg),
+                    PackageType::Foreign => Style::default()
+                        .fg(self.config.theme.foreign_fg)
+                        .bg(self.config.theme.foreign_bg),
                 };
 
                 ListItem::new(Line::from(vec![Span::styled(p.name.clone(), style)]))
@@ -103,8 +97,8 @@ impl App {
             .block(block)
             .highlight_style(
                 Style::default()
-                    .fg(SELECTED_STYLE_FG)
-                    .bg(SELECTED_STYLE_BG)
+                    .fg(self.config.theme.selected_fg)
+                    .bg(self.config.theme.selected_bg)
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::REVERSED),
             )

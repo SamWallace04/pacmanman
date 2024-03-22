@@ -42,7 +42,7 @@ pub struct PackageDetails {
 #[derive(Clone, PartialEq)]
 pub enum PackageType {
     Explicit,
-    Dependency,
+    Orphan,
     Foreign,
 }
 
@@ -50,7 +50,7 @@ pub enum PackageType {
 // i.e. reading the info from a file.
 pub fn get_all_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     let mut list = get_explicit_packages(package_manager);
-    let dependencies = get_dependency_packages(package_manager);
+    let orphans = get_orphan_packages(package_manager);
     let foreign = get_foreign_packages(package_manager);
 
     let mut dedupe: Vec<PackageVersionInfo> = list
@@ -65,7 +65,7 @@ pub fn get_all_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
         })
         .collect();
 
-    dedupe.extend(dependencies);
+    dedupe.extend(orphans);
     dedupe.sort_by_key(|i| i.name.clone());
     dedupe
 }
@@ -76,11 +76,10 @@ pub fn get_explicit_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     parse_version_list(&out, PackageType::Explicit)
 }
 
-//TODO: See if there is a way to link dependencies back to the explicit package.
-pub fn get_dependency_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
+pub fn get_orphan_packages(package_manager: &str) -> Vec<PackageVersionInfo> {
     let out = run_command(package_manager, vec!["-Qdt"]);
 
-    parse_version_list(&out, PackageType::Dependency)
+    parse_version_list(&out, PackageType::Orphan)
 }
 
 pub fn get_foreign_packages(package_manager: &str) -> Vec<PackageVersionInfo> {

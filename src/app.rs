@@ -7,6 +7,7 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
 use crate::commands::{get_all_packages, PackageType, PackageVersionInfo};
+use crate::config::{Config, ConfigFile};
 use crate::ui::*;
 
 // TODO: Should the search be separate from other filters? Allowing for subsection filtering.
@@ -15,7 +16,7 @@ use crate::ui::*;
 pub enum ListFilter {
     All,
     Explicit,
-    Dependencies,
+    Orphans,
     Foreign,
     Search(String),
 }
@@ -38,6 +39,7 @@ pub struct App {
     pub packages_list: StatefulList,
     pub current_screen: Screens,
     pub filter_input: Input,
+    pub config: Config,
 }
 
 impl App {
@@ -46,21 +48,14 @@ impl App {
             packages_list: StatefulList::new(),
             current_screen: Screens::DetailsList,
             filter_input: Input::default(),
+            // Try loading the config file, if there is an issue fallback on the hardcoded default.
+            config: ConfigFile::parse(
+                confy::load("pacmanman", None).unwrap_or(ConfigFile::default()),
+            )
+            .unwrap_or(ConfigFile::parse(ConfigFile::default()).unwrap()),
         }
     }
 
-    fn go_top(&mut self) {
-        self.packages_list.state.select(Some(0));
-    }
-
-    fn go_bottom(&mut self) {
-        self.packages_list
-            .state
-            .select(Some(self.packages_list.filtered_items.len() - 1));
-    }
-}
-
-impl App {
     pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
         let menu_titles = vec!["Packages", "Quit"];
         let mut active_menu_item = MenuItem::PackageList;
@@ -99,8 +94,10 @@ impl App {
                         }
                     }
 
-                    if self.current_screen == Screens::FilterInput {
-                        self.render_filter_popup(frame);
+                    // Render any pop up screens after everything else has been rendered.
+                    match self.current_screen {
+                        Screens::FilterInput => self.render_filter_popup(frame),
+                        Screens::DetailsList => {}
                     }
                 })
                 .unwrap();
@@ -120,7 +117,7 @@ impl App {
                         KeyCode::Char('G') => self.go_bottom(),
                         KeyCode::Char('a') => self.change_filter(ListFilter::All),
                         KeyCode::Char('e') => self.change_filter(ListFilter::Explicit),
-                        KeyCode::Char('d') => self.change_filter(ListFilter::Dependencies),
+                        KeyCode::Char('o') => self.change_filter(ListFilter::Orphans),
                         KeyCode::Char('f') => self.change_filter(ListFilter::Foreign),
                         KeyCode::Char('s') => self.current_screen = Screens::FilterInput,
                         _ => {}
@@ -130,6 +127,10 @@ impl App {
                             self.change_filter(ListFilter::Search(
                                 self.filter_input.value().to_string(),
                             ));
+                            self.filter_input.reset();
+                            self.current_screen = Screens::DetailsList;
+                        }
+                        KeyCode::Esc => {
                             self.filter_input.reset();
                             self.current_screen = Screens::DetailsList;
                         }
@@ -153,7 +154,7 @@ impl App {
             .filter(|p| match self.packages_list.list_filter.clone() {
                 ListFilter::All => true,
                 ListFilter::Explicit => p.package_type == PackageType::Explicit,
-                ListFilter::Dependencies => p.package_type == PackageType::Dependency,
+                ListFilter::Orphans => p.package_type == PackageType::Orphan,
                 ListFilter::Foreign => p.package_type == PackageType::Foreign,
                 // TODO: Make the search a bit smarter??
                 ListFilter::Search(s) => p.name.contains(s.as_str()),
@@ -161,6 +162,16 @@ impl App {
             .collect();
 
         self.go_top();
+    }
+
+    fn go_top(&mut self) {
+        self.packages_list.state.select(Some(0));
+    }
+
+    fn go_bottom(&mut self) {
+        self.packages_list
+            .state
+            .select(Some(self.packages_list.filtered_items.len() - 1));
     }
 }
 

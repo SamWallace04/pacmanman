@@ -1,5 +1,6 @@
 mod app;
 mod commands;
+mod config;
 mod ui;
 
 use std::{error::Error, io::stdout};
