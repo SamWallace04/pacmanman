@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use serde::{Deserialize, Serialize};
+
 use crate::shared::ListItems;
 #[derive(Clone)]
 pub struct PackageVersionInfo {
@@ -43,7 +45,7 @@ pub struct PackageDetails {
     pub installed_reason: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct CloudPackage {
     pub name: String,
     pub version: String,

@@ -148,10 +148,9 @@ fn render_tabs<'a>(
 }
 
 fn render_footer(frame: &mut Frame<'_>, chunk: Rect, current_window: MenuItem) {
-    let footer: Paragraph<'_>;
-    match current_window {
-    MenuItem::PackageList => footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, r to reset the filter").centered(),
-    MenuItem::Cloud => footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. s to search, r to reset the filter").centered(),
-};
+    let footer = match current_window {
+        MenuItem::PackageList => Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, r to reset the filter").centered(),
+        MenuItem::Cloud => Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. s to search, r to reset the filter").centered(),
+    };
     frame.render_widget(footer, chunk);
 }

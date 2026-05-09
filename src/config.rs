@@ -26,8 +26,8 @@ pub struct Config {
 }
 
 pub struct Theme {
-    pub fg: Color,
-    pub bg: Color,
+    //pub fg: Color,
+    //pub bg: Color,
     pub orphan_fg: Color,
     pub orphan_bg: Color,
     pub foreign_fg: Color,
@@ -56,8 +56,8 @@ impl ConfigFile {
         // TODO: Find a better way to map??
 
         let theme = Theme {
-            fg: Color::from_str(&self.theme.fg)?,
-            bg: Color::from_str(&self.theme.bg)?,
+            //fg: Color::from_str(&self.theme.fg)?,
+            //bg: Color::from_str(&self.theme.bg)?,
             orphan_fg: Color::from_str(&self.theme.orphan_fg)?,
             orphan_bg: Color::from_str(&self.theme.orphan_bg)?,
             foreign_fg: Color::from_str(&self.theme.foreign_fg)?,

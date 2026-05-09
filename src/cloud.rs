@@ -1,5 +1,13 @@
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+use std::{env, fs};
+
+use chrono::Utc;
+use color_eyre::eyre::{eyre, Result};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{layout::*, style::*, text::*, widgets::*, Frame};
+use serde::{Deserialize, Serialize};
 
 use crate::commands::{search_packages, CloudPackage};
 use crate::config::Config;
@@ -7,6 +15,12 @@ use crate::shared::StatefulList;
 
 pub struct CloudView {
     pub cloud_packages_list: StatefulList<CloudPackage>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct CacheData {
+    packages: Vec<CloudPackage>,
+    epoch: String,
 }
 
 impl CloudView {
@@ -17,10 +31,18 @@ impl CloudView {
     }
 
     pub fn load(&mut self) {
-        //TODO: Write to a file and refresh it every x hours (day?) to not hammer the pacman api
-        let cloud_packages = search_packages("pacman", "");
-        self.cloud_packages_list.items = cloud_packages.clone();
-        self.cloud_packages_list.filtered_items = cloud_packages;
+        let file_path = cache_file_path();
+        let packages: Vec<CloudPackage>;
+
+        if let Ok(cache) = read_file(&file_path) {
+            packages = cache;
+        } else {
+            packages = search_packages("pacman", "");
+            write_file(&file_path, &packages).unwrap_or_default();
+        }
+
+        self.cloud_packages_list.items = packages.clone();
+        self.cloud_packages_list.filtered_items = packages.clone();
     }
 
     pub fn render(&mut self, frame: &mut Frame<'_>, chunk: Rect, config: &Config) {
@@ -112,4 +134,50 @@ impl CloudView {
             _ => {}
         }
     }
+}
+
+fn cache_file_path() -> PathBuf {
+    env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("pacmanman")
+        .join("packages.txt")
+}
+
+fn read_file(path: &Path) -> Result<Vec<CloudPackage>> {
+    let mut file = File::open(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    // TODO: Read first line and check epoch. If it's ok continue to convert the rest from JSON.
+    let cache: CacheData = serde_json::from_str(&contents)?;
+
+    let now = Utc::now();
+    let epoch = now.timestamp();
+    if cache.epoch.parse::<i64>()? < epoch - 21600 {
+        return Err(eyre!("Outdated cache"));
+    }
+
+    Ok(cache.packages)
+}
+
+fn write_file(path: &Path, packages: &[CloudPackage]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut write_file = File::create(path)?;
+
+    let now = Utc::now();
+    let epoch = now.timestamp();
+    let data = CacheData {
+        packages: packages.to_owned(),
+        epoch: format!("{}", epoch),
+    };
+
+    let json = serde_json::to_string(&data)?;
+
+    write_file.write_all(json.as_bytes())?;
+    Ok(())
 }

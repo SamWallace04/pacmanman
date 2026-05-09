@@ -20,17 +20,19 @@ use color_eyre::config::HookBuilder;
 use crate::app::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // setup terminal
     init_error_hooks()?;
-    let terminal = init_terminal()?;
 
-    // create app and run it
+    // Load packages before switching the terminal into raw TUI mode. This keeps
+    // file IO and pacman subprocesses from disturbing the interactive terminal.
     let mut app = App::new();
-
     app.load_packages();
-    app.run(terminal)?;
 
-    restore_terminal()?;
+    let terminal = init_terminal()?;
+    let run_result = app.run(terminal);
+    let restore_result = restore_terminal();
+
+    run_result?;
+    restore_result?;
 
     Ok(())
 }
@@ -52,9 +54,11 @@ fn init_error_hooks() -> color_eyre::Result<()> {
 
 fn init_terminal() -> color_eyre::Result<Terminal<impl Backend>> {
     enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout());
-    let terminal = Terminal::new(backend)?;
+    let mut stdout = stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
     Ok(terminal)
 }
 
