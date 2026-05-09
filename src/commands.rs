@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::app::ListItems;
+use crate::shared::ListItems;
 #[derive(Clone)]
 pub struct PackageVersionInfo {
     pub name: String,

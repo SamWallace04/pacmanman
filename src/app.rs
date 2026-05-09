@@ -1,61 +1,41 @@
-use std::io::{self};
+use std::io;
 
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event as CEvent, KeyCode};
 
 use ratatui::{prelude::*, widgets::*};
-use tui_input::backend::crossterm::EventHandler;
-use tui_input::Input;
 
-use crate::commands::{
-    get_all_packages, search_packages, CloudPackage, PackageType, PackageVersionInfo,
-};
+use crate::cloud::CloudView;
 use crate::config::{Config, ConfigFile};
-use crate::ui::*;
+use crate::package_list::{InputOutcome, PackageListView};
 
-// TODO: Should the search be separate from other filters? Allowing for subsection filtering.
-// eg: Explicit with a certain name.
-#[derive(Clone)]
-pub enum ListFilter {
-    All,
-    Explicit,
-    Orphans,
-    Foreign,
-    Search(String),
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum MenuItem {
+    PackageList,
+    Cloud,
 }
 
-pub trait ListItems {}
-
-pub struct StatefulList<T: ListItems> {
-    pub state: ListState,
-    pub items: Vec<T>,
-    pub filtered_items: Vec<T>,
-    pub last_selected: Option<usize>,
-    pub list_filter: ListFilter,
+impl From<MenuItem> for usize {
+    fn from(input: MenuItem) -> usize {
+        match input {
+            MenuItem::PackageList => 0,
+            MenuItem::Cloud => 1,
+        }
+    }
 }
 
-#[derive(Clone, PartialEq)]
-pub enum Screens {
-    DetailsList,
-    FilterInput,
-    CloudList,
-}
 pub struct App {
-    pub packages_list: StatefulList<PackageVersionInfo>,
-    pub cloud_packages_list: StatefulList<CloudPackage>,
-    pub current_screen: Screens,
-    pub previous_screen: Screens,
-    pub filter_input: Input,
     pub config: Config,
+    pub active_menu: MenuItem,
+    pub package_list: PackageListView,
+    pub cloud: CloudView,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            packages_list: StatefulList::new(),
-            cloud_packages_list: StatefulList::new(),
-            current_screen: Screens::DetailsList,
-            previous_screen: Screens::DetailsList,
-            filter_input: Input::default(),
+            active_menu: MenuItem::PackageList,
+            package_list: PackageListView::new(),
+            cloud: CloudView::new(),
             // Try loading the config file, if there is an issue fallback on the hardcoded default.
             config: ConfigFile::parse(
                 confy::load("pacmanman", None).unwrap_or(ConfigFile::default()),
@@ -65,21 +45,13 @@ impl App {
     }
 
     pub fn load_packages(&mut self) {
-        let packages = get_all_packages("pacman");
-        self.packages_list.items = packages.clone();
-        self.packages_list.filtered_items = packages.clone();
-
-        //TODO: Write to a file and refresh it every x hours (day?) to not hammer the pacman api
-        let cloud_packages = search_packages("pacman", "");
-        self.cloud_packages_list.items = cloud_packages.clone();
-        self.cloud_packages_list.filtered_items = cloud_packages.clone();
+        self.package_list.load();
+        self.cloud.load();
     }
 
     pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
         let menu_titles = vec!["Packages", "All", "Quit"];
-        let mut active_menu_item = MenuItem::PackageList;
 
-        // Render loop
         loop {
             terminal
                 .draw(|frame| {
@@ -98,166 +70,88 @@ impl App {
                         .split(size);
 
                     let menu = create_menu(&menu_titles);
+                    render_tabs(menu, self.active_menu, frame, chunks[0]);
+                    render_footer(frame, chunks[2], self.active_menu);
 
-                    render_tabs(menu, active_menu_item, frame, chunks[0]);
-
-                    render_footer(frame, chunks[2]);
-
-                    match active_menu_item {
+                    match self.active_menu {
                         MenuItem::PackageList => {
-                            if !self.packages_list.filtered_items.is_empty() {
-                                self.render_package_details(frame, chunks[1]);
-                            } else {
-                                render_empty_list(frame, chunks[1]);
+                            self.package_list.render(frame, chunks[1], &self.config);
+                            if self.package_list.filter_popup_open {
+                                self.package_list.render_popup(frame);
                             }
                         }
                         MenuItem::Cloud => {
-                            self.render_cloud_tab(frame, chunks[1]);
+                            self.cloud.render(frame, chunks[1], &self.config);
                         }
-                    }
-
-                    // Render any pop up screens after everything else has been rendered.
-                    match self.current_screen {
-                        Screens::FilterInput => self.render_filter_popup(frame),
-                        Screens::DetailsList => {}
-                        Screens::CloudList => {}
                     }
                 })
                 .unwrap();
 
-            // Input handling
             if let CEvent::Key(key) = event::read().unwrap() {
                 if key.kind == event::KeyEventKind::Release {
                     continue;
                 }
 
-                // App wide keybinds, don't use them when filtering.
-                if self.current_screen != Screens::FilterInput {
+                let outcome = match self.active_menu {
+                    MenuItem::PackageList => self.package_list.handle_key(key),
+                    MenuItem::Cloud => {
+                        self.cloud.handle_key(key);
+                        InputOutcome::PassThrough
+                    }
+                };
+
+                if matches!(outcome, InputOutcome::PassThrough) {
                     match key.code {
                         KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('p') => {
-                            active_menu_item = MenuItem::PackageList;
-                            self.current_screen = Screens::DetailsList;
-                        }
-                        KeyCode::Char('a') => {
-                            active_menu_item = MenuItem::Cloud;
-                            self.current_screen = Screens::CloudList;
-                        }
+                        KeyCode::Char('p') => self.active_menu = MenuItem::PackageList,
+                        KeyCode::Char('a') => self.active_menu = MenuItem::Cloud,
                         _ => {}
                     }
                 }
-
-                match self.current_screen {
-                    Screens::DetailsList => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => self.packages_list.previous(),
-                        KeyCode::Down | KeyCode::Char('j') => self.packages_list.next(),
-                        KeyCode::Char('g') => self.packages_list.go_top(),
-                        KeyCode::Char('G') => self.packages_list.go_bottom(),
-                        KeyCode::Char('r') => self.change_filter(ListFilter::All),
-                        KeyCode::Char('e') => self.change_filter(ListFilter::Explicit),
-                        KeyCode::Char('o') => self.change_filter(ListFilter::Orphans),
-                        KeyCode::Char('f') => self.change_filter(ListFilter::Foreign),
-                        KeyCode::Char('s') => {
-                            self.previous_screen = self.current_screen.clone();
-                            self.current_screen = Screens::FilterInput
-                        }
-                        _ => {}
-                    },
-                    Screens::CloudList => match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => self.cloud_packages_list.previous(),
-                        KeyCode::Down | KeyCode::Char('j') => self.cloud_packages_list.next(),
-                        KeyCode::Char('g') => self.cloud_packages_list.go_top(),
-                        KeyCode::Char('G') => self.cloud_packages_list.go_bottom(),
-                        _ => {}
-                    },
-                    Screens::FilterInput if key.kind == KeyEventKind::Press => match key.code {
-                        KeyCode::Enter => {
-                            self.change_filter(ListFilter::Search(
-                                self.filter_input.value().to_string(),
-                            ));
-                            self.filter_input.reset();
-                            self.current_screen = self.previous_screen.clone();
-                        }
-                        KeyCode::Esc => {
-                            self.filter_input.reset();
-                            self.current_screen = self.previous_screen.clone();
-                        }
-                        _ => {
-                            self.filter_input.handle_event(&CEvent::Key(key));
-                        }
-                    },
-                    _ => {}
-                }
             }
         }
-    }
-
-    fn change_filter(&mut self, filter: ListFilter) {
-        self.packages_list.list_filter = filter;
-        self.packages_list.filtered_items = self
-            .packages_list
-            .items
-            .clone()
-            .into_iter()
-            .filter(|p| match self.packages_list.list_filter.clone() {
-                ListFilter::All => true,
-                ListFilter::Explicit => p.package_type == PackageType::Explicit,
-                ListFilter::Orphans => p.package_type == PackageType::Orphan,
-                ListFilter::Foreign => p.package_type == PackageType::Foreign,
-                ListFilter::Search(s) => p.name.contains(s.as_str()),
-            })
-            .collect();
-
-        self.packages_list.go_top();
     }
 }
 
-impl<T: ListItems> StatefulList<T> {
-    fn new() -> Self {
-        StatefulList {
-            state: ListState::default(),
-            items: vec![],
-            last_selected: None,
-            list_filter: ListFilter::All,
-            filtered_items: vec![],
-        }
-    }
+fn create_menu<'a>(menu_titles: &Vec<&'a str>) -> Vec<Line<'a>> {
+    menu_titles
+        .iter()
+        .map(|t| {
+            let (first, rest) = t.split_at(1);
+            Line::from(vec![
+                Span::styled(
+                    first,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
+                Span::styled(rest, Style::default().fg(Color::White)),
+            ])
+        })
+        .collect()
+}
 
-    fn next(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.filtered_items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => self.last_selected.unwrap_or(0),
-        };
-        self.state.select(Some(i));
-    }
+fn render_tabs<'a>(
+    menu: Vec<Line<'a>>,
+    active_menu_item: MenuItem,
+    frame: &mut Frame<'_>,
+    chunk: Rect,
+) {
+    let tabs = Tabs::new(menu)
+        .select(active_menu_item.into())
+        .block(Block::default().title("Menu").borders(Borders::ALL))
+        .style(Style::default().fg(Color::White))
+        .highlight_style(Style::default().fg(Color::Yellow))
+        .divider(Span::raw("|"));
 
-    fn previous(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.filtered_items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => self.last_selected.unwrap_or(0),
-        };
-        self.state.select(Some(i));
-    }
+    frame.render_widget(tabs, chunk);
+}
 
-    fn go_top(&mut self) {
-        self.state.select(Some(0));
-    }
-
-    fn go_bottom(&mut self) {
-        if !self.filtered_items.is_empty() {
-            self.state.select(Some(self.filtered_items.len() - 1));
-        }
-    }
+fn render_footer(frame: &mut Frame<'_>, chunk: Rect, current_window: MenuItem) {
+    let footer: Paragraph<'_>;
+    match current_window {
+    MenuItem::PackageList => footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, r to reset the filter").centered(),
+    MenuItem::Cloud => footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. s to search, r to reset the filter").centered(),
+};
+    frame.render_widget(footer, chunk);
 }

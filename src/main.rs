@@ -1,7 +1,9 @@
 mod app;
+mod cloud;
 mod commands;
 mod config;
-mod ui;
+mod package_list;
+mod shared;
 
 use std::{error::Error, io::stdout};
 
