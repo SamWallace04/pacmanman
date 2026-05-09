@@ -23,7 +23,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let terminal = init_terminal()?;
 
     // create app and run it
-    App::new().run(terminal)?;
+    let mut app = App::new();
+
+    app.load_packages();
+    app.run(terminal)?;
 
     restore_terminal()?;
 

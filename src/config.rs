@@ -3,7 +3,7 @@ use std::{error::Error, str::FromStr};
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     theme: ConfigTheme,
 }
@@ -36,14 +36,6 @@ pub struct Theme {
     pub selected_bg: Color,
 }
 
-impl Default for ConfigFile {
-    fn default() -> Self {
-        Self {
-            theme: ConfigTheme::default(),
-        }
-    }
-}
-
 impl Default for ConfigTheme {
     fn default() -> Self {
         Self {
@@ -62,6 +54,7 @@ impl Default for ConfigTheme {
 impl ConfigFile {
     pub fn parse(self) -> Result<Config, Box<dyn Error>> {
         // TODO: Find a better way to map??
+
         let theme = Theme {
             fg: Color::from_str(&self.theme.fg)?,
             bg: Color::from_str(&self.theme.bg)?,

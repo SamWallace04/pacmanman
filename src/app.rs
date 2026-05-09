@@ -6,7 +6,9 @@ use ratatui::{prelude::*, widgets::*};
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::commands::{get_all_packages, PackageType, PackageVersionInfo};
+use crate::commands::{
+    get_all_packages, search_packages, CloudPackage, PackageType, PackageVersionInfo,
+};
 use crate::config::{Config, ConfigFile};
 use crate::ui::*;
 
@@ -21,23 +23,27 @@ pub enum ListFilter {
     Search(String),
 }
 
-// TODO: Turn into a generic??
-pub struct StatefulList {
+pub trait ListItems {}
+
+pub struct StatefulList<T: ListItems> {
     pub state: ListState,
-    pub items: Vec<PackageVersionInfo>,
-    pub filtered_items: Vec<PackageVersionInfo>,
+    pub items: Vec<T>,
+    pub filtered_items: Vec<T>,
     pub last_selected: Option<usize>,
     pub list_filter: ListFilter,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Screens {
     DetailsList,
     FilterInput,
+    CloudList,
 }
 pub struct App {
-    pub packages_list: StatefulList,
+    pub packages_list: StatefulList<PackageVersionInfo>,
+    pub cloud_packages_list: StatefulList<CloudPackage>,
     pub current_screen: Screens,
+    pub previous_screen: Screens,
     pub filter_input: Input,
     pub config: Config,
 }
@@ -46,7 +52,9 @@ impl App {
     pub fn new() -> Self {
         Self {
             packages_list: StatefulList::new(),
+            cloud_packages_list: StatefulList::new(),
             current_screen: Screens::DetailsList,
+            previous_screen: Screens::DetailsList,
             filter_input: Input::default(),
             // Try loading the config file, if there is an issue fallback on the hardcoded default.
             config: ConfigFile::parse(
@@ -56,8 +64,19 @@ impl App {
         }
     }
 
+    pub fn load_packages(&mut self) {
+        let packages = get_all_packages("pacman");
+        self.packages_list.items = packages.clone();
+        self.packages_list.filtered_items = packages.clone();
+
+        //TODO: Write to a file and refresh it every x hours (day?) to not hammer the pacman api
+        let cloud_packages = search_packages("pacman", "");
+        self.cloud_packages_list.items = cloud_packages.clone();
+        self.cloud_packages_list.filtered_items = cloud_packages.clone();
+    }
+
     pub fn run(&mut self, mut terminal: Terminal<impl Backend>) -> io::Result<()> {
-        let menu_titles = vec!["Packages", "Quit"];
+        let menu_titles = vec!["Packages", "All", "Quit"];
         let mut active_menu_item = MenuItem::PackageList;
 
         // Render loop
@@ -86,11 +105,14 @@ impl App {
 
                     match active_menu_item {
                         MenuItem::PackageList => {
-                            if self.packages_list.filtered_items.len() > 0 {
+                            if !self.packages_list.filtered_items.is_empty() {
                                 self.render_package_details(frame, chunks[1]);
                             } else {
                                 render_empty_list(frame, chunks[1]);
                             }
+                        }
+                        MenuItem::Cloud => {
+                            self.render_cloud_tab(frame, chunks[1]);
                         }
                     }
 
@@ -98,6 +120,7 @@ impl App {
                     match self.current_screen {
                         Screens::FilterInput => self.render_filter_popup(frame),
                         Screens::DetailsList => {}
+                        Screens::CloudList => {}
                     }
                 })
                 .unwrap();
@@ -107,19 +130,44 @@ impl App {
                 if key.kind == event::KeyEventKind::Release {
                     continue;
                 }
+
+                // App wide keybinds, don't use them when filtering.
+                if self.current_screen != Screens::FilterInput {
+                    match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('p') => {
+                            active_menu_item = MenuItem::PackageList;
+                            self.current_screen = Screens::DetailsList;
+                        }
+                        KeyCode::Char('a') => {
+                            active_menu_item = MenuItem::Cloud;
+                            self.current_screen = Screens::CloudList;
+                        }
+                        _ => {}
+                    }
+                }
+
                 match self.current_screen {
                     Screens::DetailsList => match key.code {
-                        KeyCode::Char('q') => return Ok(()),
-                        KeyCode::Char('p') => active_menu_item = MenuItem::PackageList,
                         KeyCode::Up | KeyCode::Char('k') => self.packages_list.previous(),
                         KeyCode::Down | KeyCode::Char('j') => self.packages_list.next(),
-                        KeyCode::Char('g') => self.go_top(),
-                        KeyCode::Char('G') => self.go_bottom(),
-                        KeyCode::Char('a') => self.change_filter(ListFilter::All),
+                        KeyCode::Char('g') => self.packages_list.go_top(),
+                        KeyCode::Char('G') => self.packages_list.go_bottom(),
+                        KeyCode::Char('r') => self.change_filter(ListFilter::All),
                         KeyCode::Char('e') => self.change_filter(ListFilter::Explicit),
                         KeyCode::Char('o') => self.change_filter(ListFilter::Orphans),
                         KeyCode::Char('f') => self.change_filter(ListFilter::Foreign),
-                        KeyCode::Char('s') => self.current_screen = Screens::FilterInput,
+                        KeyCode::Char('s') => {
+                            self.previous_screen = self.current_screen.clone();
+                            self.current_screen = Screens::FilterInput
+                        }
+                        _ => {}
+                    },
+                    Screens::CloudList => match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => self.cloud_packages_list.previous(),
+                        KeyCode::Down | KeyCode::Char('j') => self.cloud_packages_list.next(),
+                        KeyCode::Char('g') => self.cloud_packages_list.go_top(),
+                        KeyCode::Char('G') => self.cloud_packages_list.go_bottom(),
                         _ => {}
                     },
                     Screens::FilterInput if key.kind == KeyEventKind::Press => match key.code {
@@ -128,11 +176,11 @@ impl App {
                                 self.filter_input.value().to_string(),
                             ));
                             self.filter_input.reset();
-                            self.current_screen = Screens::DetailsList;
+                            self.current_screen = self.previous_screen.clone();
                         }
                         KeyCode::Esc => {
                             self.filter_input.reset();
-                            self.current_screen = Screens::DetailsList;
+                            self.current_screen = self.previous_screen.clone();
                         }
                         _ => {
                             self.filter_input.handle_event(&CEvent::Key(key));
@@ -156,34 +204,22 @@ impl App {
                 ListFilter::Explicit => p.package_type == PackageType::Explicit,
                 ListFilter::Orphans => p.package_type == PackageType::Orphan,
                 ListFilter::Foreign => p.package_type == PackageType::Foreign,
-                // TODO: Make the search a bit smarter??
                 ListFilter::Search(s) => p.name.contains(s.as_str()),
             })
             .collect();
 
-        self.go_top();
-    }
-
-    fn go_top(&mut self) {
-        self.packages_list.state.select(Some(0));
-    }
-
-    fn go_bottom(&mut self) {
-        self.packages_list
-            .state
-            .select(Some(self.packages_list.filtered_items.len() - 1));
+        self.packages_list.go_top();
     }
 }
 
-impl StatefulList {
+impl<T: ListItems> StatefulList<T> {
     fn new() -> Self {
-        let packages = get_all_packages(&"pacman");
         StatefulList {
             state: ListState::default(),
-            items: packages.clone(),
+            items: vec![],
             last_selected: None,
             list_filter: ListFilter::All,
-            filtered_items: packages.clone(),
+            filtered_items: vec![],
         }
     }
 
@@ -213,5 +249,15 @@ impl StatefulList {
             None => self.last_selected.unwrap_or(0),
         };
         self.state.select(Some(i));
+    }
+
+    fn go_top(&mut self) {
+        self.state.select(Some(0));
+    }
+
+    fn go_bottom(&mut self) {
+        if !self.filtered_items.is_empty() {
+            self.state.select(Some(self.filtered_items.len() - 1));
+        }
     }
 }

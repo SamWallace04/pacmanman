@@ -1,4 +1,6 @@
 use std::process::Command;
+
+use crate::app::ListItems;
 #[derive(Clone)]
 pub struct PackageVersionInfo {
     pub name: String,
@@ -11,6 +13,8 @@ impl PartialEq for PackageVersionInfo {
         self.name == other.name
     }
 }
+
+impl ListItems for PackageVersionInfo {}
 
 impl PackageVersionInfo {
     pub fn get_details(&mut self) -> PackageDetails {
@@ -38,6 +42,17 @@ pub struct PackageDetails {
     pub installed_size: String,
     pub installed_reason: String,
 }
+
+#[derive(Clone, Default)]
+pub struct CloudPackage {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub source: String,
+    pub is_installed: bool,
+}
+
+impl ListItems for CloudPackage {}
 
 #[derive(Clone, PartialEq)]
 pub enum PackageType {
@@ -94,6 +109,12 @@ fn get_package_details(package_manager: &str, package_name: &str) -> PackageDeta
     parse_details_list(&out)
 }
 
+pub fn search_packages(package_manager: &str, search_string: &str) -> Vec<CloudPackage> {
+    let out = run_command(package_manager, vec!["-Ss", search_string]);
+
+    parse_cloud_package_list(&out)
+}
+
 fn parse_version_list(input: &str, package_type: PackageType) -> Vec<PackageVersionInfo> {
     let list = input.split("\n");
 
@@ -138,6 +159,32 @@ fn parse_details_list(input: &str) -> PackageDetails {
     }
 
     details
+}
+
+fn parse_cloud_package_list(input: &str) -> Vec<CloudPackage> {
+    let lines: Vec<&str> = input.split("\n").collect();
+    let mut packages: Vec<CloudPackage> = vec![];
+
+    let mut line_num = 0;
+    while line_num < lines.len() - 1 {
+        let split1: Vec<&str> = lines[line_num].split("/").collect();
+        let split2: Vec<&str> = split1[1].split(" ").collect();
+
+        let package: CloudPackage = CloudPackage {
+            name: split2[0].to_owned(),
+            description: lines[line_num + 1].to_owned(),
+            version: split2[1].to_owned(),
+            source: split1[0].to_owned(),
+            is_installed: split2.len() > 2,
+        };
+        packages.extend(vec![package]);
+
+        line_num += 2;
+    }
+
+    // Remove this to sort by repo -> name
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+    packages
 }
 
 fn run_command(package_manager: &str, args: Vec<&str>) -> String {

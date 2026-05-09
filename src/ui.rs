@@ -5,12 +5,14 @@ use crate::{app::App, commands::PackageType};
 #[derive(Copy, Clone, Debug)]
 pub enum MenuItem {
     PackageList,
+    Cloud,
 }
 
 impl From<MenuItem> for usize {
     fn from(input: MenuItem) -> usize {
         match input {
             MenuItem::PackageList => 0,
+            MenuItem::Cloud => 1,
         }
     }
 }
@@ -49,13 +51,13 @@ pub fn render_tabs<'a>(
     frame.render_widget(tabs, chunk);
 }
 
-pub fn render_footer<'a>(frame: &mut Frame<'_>, chunk: Rect) {
-    let footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, a to reset the filter").centered();
+pub fn render_footer(frame: &mut Frame<'_>, chunk: Rect) {
+    let footer = Paragraph::new("\nUse ↓/j and ↑/k to move, g/G to go top/bottom. e to show explicitly installed packages, o to show orphan packages, f to show foreign packages (AUR/manual install), s to search, r to reset the filter").centered();
     frame.render_widget(footer, chunk);
 }
 
 impl App {
-    pub fn render_package_details<'a>(&mut self, frame: &mut Frame<'_>, chunk: Rect) {
+    pub fn render_package_details(&mut self, frame: &mut Frame<'_>, chunk: Rect) {
         let layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(10), Constraint::Percentage(90)].as_ref())
@@ -86,10 +88,7 @@ impl App {
             })
             .collect();
 
-        let index = match self.packages_list.state.selected() {
-            Some(i) => i,
-            None => 0,
-        };
+        let index = self.packages_list.state.selected().unwrap_or_default();
 
         let mut selected_package = self.packages_list.filtered_items[index].clone();
 
@@ -171,6 +170,84 @@ impl App {
 
         frame.render_widget(Clear, area); //this clears out the background
         frame.render_widget(input, area);
+    }
+
+    pub fn render_cloud_tab(&mut self, frame: &mut Frame<'_>, chunk: Rect) {
+        // TODO: Change this to a table
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+            .split(chunk);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::White))
+            .title("Packages")
+            .border_type(BorderType::Plain);
+
+        let items: Vec<_> = self
+            .cloud_packages_list
+            .filtered_items
+            .iter()
+            .map(|p| {
+                let style = match p.is_installed {
+                    true => Style::default(),
+                    false => Style::default()
+                        .fg(self.config.theme.foreign_fg)
+                        .bg(self.config.theme.foreign_bg),
+                };
+
+                ListItem::new(Line::from(vec![Span::styled(p.name.clone(), style)]))
+            })
+            .collect();
+
+        let index = self
+            .cloud_packages_list
+            .state
+            .selected()
+            .unwrap_or_default();
+
+        let selected_package = self.cloud_packages_list.filtered_items[index].clone();
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(
+                Style::default()
+                    .fg(self.config.theme.selected_fg)
+                    .bg(self.config.theme.selected_bg)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED),
+            )
+            .highlight_symbol(">")
+            .highlight_spacing(HighlightSpacing::Always);
+
+        let details_block = Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::White))
+            .title("Details")
+            .border_type(BorderType::Plain);
+
+        let details_text = vec![
+            Line::styled(
+                "Version: ".to_owned() + &selected_package.version.clone(),
+                Style::default(),
+            ),
+            Line::styled(
+                "Description: ".to_owned() + &selected_package.description.clone(),
+                Style::default(),
+            ),
+            Line::styled(
+                "Source: ".to_owned() + &selected_package.source.clone(),
+                Style::default(),
+            ),
+        ];
+
+        let details_display = Paragraph::new(details_text)
+            .block(details_block)
+            .wrap(Wrap { trim: false });
+
+        frame.render_stateful_widget(list, layout[0], &mut self.cloud_packages_list.state);
+        frame.render_widget(details_display, layout[1]);
     }
 }
 
